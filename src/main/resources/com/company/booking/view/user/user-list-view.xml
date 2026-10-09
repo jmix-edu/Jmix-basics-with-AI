@@ -8,7 +8,7 @@
             <fetchPlan extends="_base"/>
             <loader id="usersDl" readOnly="true">
                 <query>
-                    <![CDATA[select e from User e order by e.username]]>
+                    <![CDATA[select e from User e where e.active = TRUE order by e.username asc]]>
                 </query>
             </loader>
         </collection>
@@ -25,10 +25,6 @@
         </urlQueryParameters>
     </facets>
     <layout>
-        <genericFilter id="genericFilter"
-                       dataLoader="usersDl">
-            <properties include=".*"/>
-        </genericFilter>
         <hbox id="buttonsPanel" wrap="true" width="100%">
             <startSlot>
                 <button id="createButton" action="usersDataGrid.createAction"/>
@@ -70,6 +66,10 @@
                 <column property="active"/>
             </columns>
         </dataGrid>
+        <genericFilter id="genericFilter"
+                       dataLoader="usersDl">
+            <properties include=".*"/>
+        </genericFilter>
         <hbox id="lookupActions" visible="false">
             <button id="selectButton" action="selectAction"/>
             <button id="discardButton" action="discardAction"/>

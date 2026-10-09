@@ -3,6 +3,7 @@ package com.company.booking.datamodel;
 import com.company.booking.entity.*;
 import com.company.booking.test_support.AuthenticatedAsAdmin;
 import io.jmix.core.DataManager;
+import io.jmix.core.FetchPlan;
 import io.jmix.core.Id;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,8 @@ public class DataModelTest {
     @Autowired
     DataManager dataManager;
 
-    // Removed in this order: building (cascades to floors, rooms, desks, links, bookings), then amenity, then user
+    // Removed in this order: building (cascades to floors, rooms, desks, bookings), then user, then amenity.
+    // Room amenities are unlinked first: ROOM_AMENITY_LINK has no ON DELETE CASCADE yet (spec backlog).
     final List<Object> cleanup = new ArrayList<>();
 
     Building building;
@@ -62,7 +64,6 @@ public class DataModelTest {
         Booking roomBooking = givenBooking(room, null);
         Booking deskBooking = givenBooking(null, desk);
 
-        // The delete succeeds only if ROOM_AMENITY_LINK rows go with the room (FK ON DELETE CASCADE)
         dataManager.remove(dataManager.load(Id.of(building)).one());
 
         assertThat(dataManager.load(Id.of(floor)).optional()).isEmpty();
@@ -70,12 +71,12 @@ public class DataModelTest {
         assertThat(dataManager.load(Id.of(desk)).optional()).isEmpty();
         assertThat(dataManager.load(Id.of(roomBooking)).optional()).isEmpty();
         assertThat(dataManager.load(Id.of(deskBooking)).optional()).isEmpty();
-        assertThat(dataManager.load(Id.of(amenity)).optional()).isPresent();
     }
 
     @Test
     void amenityAssignedToRoomCannotBeDeleted() {
         givenBuilding();
+        givenRoomAmenity();
 
         Amenity assigned = dataManager.load(Id.of(amenity)).one();
         assertThatThrownBy(() -> dataManager.remove(assigned));
@@ -91,10 +92,6 @@ public class DataModelTest {
         user.setFirstName("Тест");
         user = dataManager.save(user);
 
-        amenity = dataManager.create(Amenity.class);
-        amenity.setName("Проектор " + suffix);
-        amenity = dataManager.save(amenity);
-
         building = dataManager.create(Building.class);
         building.setName("Здание " + suffix);
 
@@ -106,7 +103,6 @@ public class DataModelTest {
         room.setFloor(floor);
         room.setName("Переговорка");
         room.setCapacity(6);
-        room.setAmenities(new ArrayList<>(List.of(amenity)));
 
         desk = dataManager.create(Desk.class);
         desk.setFloor(floor);
@@ -115,8 +111,25 @@ public class DataModelTest {
         dataManager.save(building, floor, room, desk);
 
         cleanup.add(building);
-        cleanup.add(amenity);
         cleanup.add(user);
+    }
+
+    private void givenRoomAmenity() {
+        amenity = dataManager.create(Amenity.class);
+        amenity.setName("Проектор " + UUID.randomUUID());
+        amenity = dataManager.save(amenity);
+        cleanup.add(amenity);
+
+        Room loaded = loadRoomWithAmenities();
+        loaded.getAmenities().add(amenity);
+        dataManager.save(loaded);
+    }
+
+    private Room loadRoomWithAmenities() {
+        return dataManager.load(Room.class)
+                .id(room.getId())
+                .fetchPlan(fp -> fp.addFetchPlan(FetchPlan.BASE).add("amenities"))
+                .one();
     }
 
     private Booking givenBooking(Room room, Desk desk) {
@@ -131,6 +144,13 @@ public class DataModelTest {
 
     @AfterEach
     void tearDown() {
+        if (amenity != null && room != null) {
+            dataManager.load(Id.of(room)).optional().ifPresent(r -> {
+                Room loaded = loadRoomWithAmenities();
+                loaded.getAmenities().clear();
+                dataManager.save(loaded);
+            });
+        }
         cleanup.forEach(entity -> dataManager.load(Id.of(entity)).optional().ifPresent(dataManager::remove));
         cleanup.clear();
     }

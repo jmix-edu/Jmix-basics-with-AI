@@ -56,6 +56,9 @@ public class UserUiTest {
         String username = "test-user-" + System.currentTimeMillis();
         usernameField.setValue(username);
 
+        TypedTextField<String> firstNameField = UiTestUtils.getComponent(userDetailView, "firstNameField");
+        firstNameField.setValue("Test");
+
         JmixPasswordField passwordField = UiTestUtils.getComponent(userDetailView, "passwordField");
         passwordField.setValue("test-passwd");
 

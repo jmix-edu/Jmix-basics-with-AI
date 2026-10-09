@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<view xmlns="http://jmix.io/schema/flowui/view"
+      xmlns:c="http://jmix.io/schema/flowui/jpql-condition"
+      title="msg://roomListView.title"
+      focusComponent="roomsDataGrid">
+    <data>
+        <collection id="roomsDc"
+                    class="com.company.booking.entity.Room">
+            <fetchPlan extends="_base">
+                <property name="floor" fetchPlan="_instance_name">
+                    <property name="building" fetchPlan="_instance_name"/>
+                </property>
+            </fetchPlan>
+            <loader id="roomsDl" readOnly="true">
+                <query>
+                    <![CDATA[select e from Room e order by e.floor.building.name, e.floor.number, e.name]]>
+                </query>
+            </loader>
+        </collection>
+    </data>
+    <facets>
+        <dataLoadCoordinator auto="true"/>
+        <urlQueryParameters>
+            <pagination component="pagination"/>
+        </urlQueryParameters>
+    </facets>
+    <actions>
+        <action id="selectAction" type="lookup_select"/>
+        <action id="discardAction" type="lookup_discard"/>
+    </actions>
+    <layout>
+        <hbox id="buttonsPanel" wrap="true" width="100%">
+            <startSlot>
+            </startSlot>
+            <endSlot>
+                <simplePagination id="pagination" dataLoader="roomsDl"/>
+            </endSlot>
+        </hbox>
+        <dataGrid id="roomsDataGrid"
+                  width="100%"
+                  minHeight="20em"
+                  dataContainer="roomsDc"
+                  columnReorderingAllowed="true">
+            <actions>
+            </actions>
+            <columns resizable="true">
+                <column property="floor.building"/>
+                <column property="floor"/>
+                <column property="name"/>
+                <column property="capacity"/>
+            </columns>
+        </dataGrid>
+        <hbox id="lookupActions" visible="false">
+            <button id="selectButton" action="selectAction"/>
+            <button id="discardButton" action="discardAction"/>
+        </hbox>
+    </layout>
+</view>

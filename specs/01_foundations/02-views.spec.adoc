@@ -1,0 +1,390 @@
+= Экраны: list/detail для модели бронирования
+:toc:
+:sectnums:
+
+[cols="1,3"]
+|===
+| Модуль | 01_foundations
+| Статус | Реализовано, ждёт Gate 3
+| Зависит от | `01-data-model.spec.adoc`
+|===
+
+== Цель
+
+Дать пользователю экраны для ведения справочника зданий и бронирований:
+списки и карточки для `Building`, `Floor`, `Room`, `Desk`, `Amenity`, `Booking`.
+Экраны собираются по единому канону, чтобы все карточки выглядели и вели себя
+одинаково.
+
+== Область
+
+=== Входит
+
+* List- и detail-экраны из раздела «Набор экранов».
+* Правила канона для полей карточек.
+* Пункты меню и русские ключи заголовков.
+
+=== Не входит
+
+* Роли и политики доступа (`@ViewPolicy`, `@MenuPolicy`). Это модуль
+  `02_security`; до него экраны доступны через `FullAccessRole`.
+* Правила бронирования: проверка слота, `startAt < endAt`, «ровно одна цель
+  брони». Карточка брони их не проверяет.
+* Значения по умолчанию на форме брони (текущий пользователь, ближайший слот).
+  Это мелкие правки, их делаем отдельно без спеки.
+* Календарь, шахматка занятости, бронирование со страницы переговорки.
+* Фильтр списков по зданию или этажу сверх стандартного `genericFilter`.
+* Удаление здания, у переговорок которого есть удобства. Сейчас оно падает с
+  ошибкой внешнего ключа (бэклог `01-data-model`), экраны это не обходят.
+* Перевод старых английских ключей (`User`, `LoginView`, `menu.application`) и
+  подключение `jmix-translations-ru`.
+* Автотесты экранов. Экраны проверяются руками по чек-листу Gate 3.
+
+== Набор экранов
+
+[cols="2,2,1,1,3"]
+|===
+| Экран | id | Route | Меню | Назначение
+
+| Список зданий | `Building.list` | `buildings` | да | CRUD зданий
+| Карточка здания | `Building.detail` | `buildings/:id` | — | здание и его этажи
+| Карточка этажа | `Floor_.detail` | `floors/:id` | — | диалог из карточки здания; переговорки и места этажа
+| Карточка переговорки | `Room.detail` | `rooms/:id` | — | диалог из карточки этажа; удобства переговорки
+| Карточка места | `Desk.detail` | `desks/:id` | — | диалог из карточки этажа
+| Список переговорок | `Room.list` | `rooms` | нет | только выбор переговорки для брони
+| Список мест | `Desk.list` | `desks` | нет | только выбор места для брони
+| Список удобств | `Amenity.list` | `amenities` | да | CRUD справочника; выбор удобств для переговорки
+| Карточка удобства | `Amenity.detail` | `amenities/:id` | — |
+| Список бронирований | `Booking.list` | `bookings` | да | CRUD броней
+| Карточка брони | `Booking.detail` | `bookings/:id` | — |
+|===
+
+`Floor.list` не нужен: на этаж нет ссылок извне здания.
+
+Пакеты: `com.company.booking.view.<entity>` (`view.building`, `view.floor`,
+`view.room`, `view.desk`, `view.amenity`, `view.booking`).
+
+=== Владение агрегатом
+
+Этажи, переговорки и места редактируются только внутри агрегата здания:
+здание → этаж → переговорка/место, каждый уровень — грид в карточке родителя,
+дочерняя карточка открывается диалогом. Изменения сохраняются вместе со
+зданием кнопкой «ОК» в его карточке.
+
+`Room.list` и `Desk.list` нужны только для выбора цели брони. В них нет
+кнопок создания, редактирования и удаления, и их нет в меню.
+
+== Канон полей
+
+. *Ссылка `@ManyToOne`* — компонент выбора, который ставит мастер Studio:
+  `entityPicker` с действиями `entity_lookup` и `entity_clear`. Выбор открывает
+  список целевой сущности в режиме lookup, поэтому у этого списка должен быть
+  `@LookupComponent`.
+. *Обратная ссылка композиции* (`Floor.building`, `Room.floor`, `Desk.floor`)
+  на форме не показывается: её заполняет родитель при создании из грида.
+. *Enum* — выпадающий список `select`, привязанный к свойству (так генерирует
+  Studio). Не `entityComboBox`.
+. *Связь M2M* (`Room.amenities`) — встроенный грид в карточке с действиями
+  «Добавить» (выбор из `Amenity.list`) и «Исключить». Удобство при этом не
+  удаляется, только снимается с переговорки.
+. *Композиция* (`Building.floors`, `Floor.rooms`, `Floor.desks`) — встроенный
+  грид с действиями «Создать», «Изменить», «Удалить», карточка ребёнка
+  открывается диалогом.
+. *Технические поля* `id` и `version` не показываются ни в формах, ни в
+  колонках списков.
+. *Типы полей* — по скиллу `jmix-create-detail-view`: `Integer` →
+  `integerField`, `LocalDateTime` → `dateTimePicker`, длинный текст
+  (`Booking.comment`) → `textArea`, строка → `textField`.
+. *Подписи* полей и колонок берутся из ключей сущностей
+  (`com.company.booking.entity/...`, уже есть). Новых ключей для полей не
+  заводим.
+
+== Содержимое экранов
+
+=== Building
+
+* *Список*: колонки `name`, `address`; сортировка по `name`.
+* *Карточка*: поля `name`, `address`; грид этажей (`number`, `name`),
+  сортировка по `number`.
+
+=== Floor (диалог)
+
+* Поля `number`, `name`.
+* Грид переговорок (`name`, `capacity`) и грид мест (`code`).
+
+=== Room (диалог)
+
+* Поля `name`, `capacity`.
+* Грид удобств (`name`) с «Добавить» / «Исключить».
+* *Список (lookup)*: колонки `floor.building`, `floor`, `name`, `capacity`.
+  Здание и этаж нужны, чтобы различать одноимённые переговорки.
+
+=== Desk (диалог)
+
+* Поле `code`.
+* *Список (lookup)*: колонки `floor.building`, `floor`, `code`.
+
+=== Amenity
+
+* *Список*: колонка `name`, сортировка по `name`.
+* *Карточка*: поле `name`.
+
+=== Booking
+
+* *Список*: колонки `user`, `room`, `desk`, `startAt`, `endAt`, `status`;
+  сортировка по `startAt` по убыванию.
+* *Карточка*: `user`, `room`, `desk` — `entityPicker` (выбор из `User.list`,
+  `Room.list`, `Desk.list`); `startAt`, `endAt` — `dateTimePicker`; `status` —
+  `select`; `comment` — `textArea`.
+* `User.list` уже показывает только активных пользователей. Это подходит и для
+  выбора автора брони.
+
+== Ключи сообщений
+
+Формат — как генерирует Studio: группа — пакет экрана, ключ —
+`<имяКласса>.title` с маленькой буквы. Ключи создаёт Studio в обоих бандлах;
+Claude правит только значения в `messages_ru_RU.properties` и сам новых ключей в
+`messages_en.properties` не добавляет.
+
+[cols="3,2"]
+|===
+| Ключ | Значение
+
+| `com.company.booking.view.building/buildingListView.title` | Здания
+| `com.company.booking.view.building/buildingDetailView.title` | Здание
+| `com.company.booking.view.floor/floorDetailView.title` | Этаж
+| `com.company.booking.view.room/roomListView.title` | Переговорки
+| `com.company.booking.view.room/roomDetailView.title` | Переговорка
+| `com.company.booking.view.desk/deskListView.title` | Рабочие места
+| `com.company.booking.view.desk/deskDetailView.title` | Рабочее место
+| `com.company.booking.view.amenity/amenityListView.title` | Удобства
+| `com.company.booking.view.amenity/amenityDetailView.title` | Удобство
+| `com.company.booking.view.booking/bookingListView.title` | Бронирования
+| `com.company.booking.view.booking/bookingDetailView.title` | Бронирование
+|===
+
+Подписи стандартных действий (создать, добавить, исключить) берутся из
+фреймворка. Если появится нестандартная кнопка, ей нужен свой ключ.
+
+=== Меню
+
+Пункты в существующей группе `application`, заголовок пункта — ключ заголовка
+списка (как у `User.list`). Порядок:
+
+. Бронирования — `Booking.list`
+. Здания — `Building.list`
+. Удобства — `Amenity.list`
+. Пользователи — `User.list` (уже есть)
+
+== Распределение работы
+
+* *Studio* генерирует скаффолд: контроллер и дескриптор каждого экрана,
+  пункты меню, ключи заголовков.
+* *Claude* доводит сгенерированное до канона:
+** встроенные гриды композиции с диалогами и fetch plan для вложенных уровней;
+** грид M2M в карточке переговорки;
+** скрытие обратных ссылок и технических полей;
+** lookup-only `Room.list` / `Desk.list`, колонки и сортировки;
+** русские заголовки и меню.
+* Отличия от скаффолда Claude перечисляет в отчёте по каждому файлу.
+
+== Эталон Studio
+
+Дословные дескрипторы `Booking.list` и `Booking.detail` в том виде, в каком их
+сгенерировала Studio (Jmix 3.0.3, 2026-10-08). Это эталон структуры: порядок
+секций, `urlQueryParameters` + `genericFilter` + `simplePagination`, lookup-кнопки,
+`responsiveSteps` формы. Канон полей (раздел выше) применяется поверх него.
+
+.booking-list-view.xml (Studio)
+[source,xml]
+----
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<view xmlns="http://jmix.io/schema/flowui/view"
+      xmlns:c="http://jmix.io/schema/flowui/jpql-condition"
+      title="msg://bookingListView.title"
+      focusComponent="bookingsDataGrid">
+    <data>
+        <collection id="bookingsDc"
+                    class="com.company.booking.entity.Booking">
+            <fetchPlan extends="_base">
+                <property name="user" fetchPlan="_base"/>
+                <property name="room" fetchPlan="_base"/>
+                <property name="desk" fetchPlan="_base"/>
+            </fetchPlan>
+            <loader id="bookingsDl" readOnly="true">
+                <query>
+                    <![CDATA[select e from Booking e]]>
+                </query>
+            </loader>
+        </collection>
+    </data>
+    <facets>
+        <dataLoadCoordinator auto="true"/>
+        <urlQueryParameters>
+            <genericFilter component="genericFilter"/>
+            <pagination component="pagination"/>
+        </urlQueryParameters>
+    </facets>
+    <actions>
+        <action id="selectAction" type="lookup_select"/>
+        <action id="discardAction" type="lookup_discard"/>
+    </actions>
+    <layout>
+        <genericFilter id="genericFilter"
+                       dataLoader="bookingsDl">
+            <properties include=".*"/>
+        </genericFilter>
+        <hbox id="buttonsPanel" wrap="true" width="100%">
+            <startSlot>
+                <button id="createButton" action="bookingsDataGrid.createAction"/>
+                <button id="editButton" action="bookingsDataGrid.editAction"/>
+                <button id="removeButton" action="bookingsDataGrid.removeAction"/>
+            </startSlot>
+            <endSlot>
+                <simplePagination id="pagination" dataLoader="bookingsDl"/>
+            </endSlot>
+        </hbox>
+        <dataGrid id="bookingsDataGrid"
+                  width="100%"
+                  minHeight="20em"
+                  dataContainer="bookingsDc"
+                  columnReorderingAllowed="true">
+            <actions>
+                <action id="createAction" type="list_create"/>
+                <action id="editAction" type="list_edit"/>
+                <action id="removeAction" type="list_remove"/>
+            </actions>
+            <columns resizable="true">
+                <column property="user"/>
+                <column property="room"/>
+                <column property="desk"/>
+                <column property="startAt"/>
+                <column property="endAt"/>
+                <column property="status"/>
+                <column property="comment"/>
+            </columns>
+        </dataGrid>
+        <hbox id="lookupActions" visible="false">
+            <button id="selectButton" action="selectAction"/>
+            <button id="discardButton" action="discardAction"/>
+        </hbox>
+    </layout>
+</view>
+----
+
+.booking-detail-view.xml (Studio)
+[source,xml]
+----
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<view xmlns="http://jmix.io/schema/flowui/view"
+      title="msg://bookingDetailView.title"
+      focusComponent="form">
+    <data>
+        <instance id="bookingDc"
+                  class="com.company.booking.entity.Booking">
+            <fetchPlan extends="_base">
+                <property name="user" fetchPlan="_base"/>
+                <property name="room" fetchPlan="_base"/>
+                <property name="desk" fetchPlan="_base"/>
+            </fetchPlan>
+            <loader id="bookingDl"/>
+        </instance>
+    </data>
+    <facets>
+        <dataLoadCoordinator auto="true"/>
+    </facets>
+    <actions>
+        <action id="saveCloseAction" type="detail_saveClose"/>
+        <action id="closeAction" type="detail_close"/>
+    </actions>
+    <layout>
+        <formLayout id="form" dataContainer="bookingDc">
+            <responsiveSteps>
+                <responsiveStep minWidth="0" columns="1"/>
+                <responsiveStep minWidth="40em" columns="2"/>
+            </responsiveSteps>
+            <entityPicker id="userField" property="user">
+                <actions>
+                    <action id="entityLookupAction" type="entity_lookup"/>
+                    <action id="entityClearAction" type="entity_clear"/>
+                </actions>
+            </entityPicker>
+            <entityPicker id="roomField" property="room">
+                <actions>
+                    <action id="entityLookupAction" type="entity_lookup"/>
+                    <action id="entityClearAction" type="entity_clear"/>
+                </actions>
+            </entityPicker>
+            <entityPicker id="deskField" property="desk">
+                <actions>
+                    <action id="entityLookupAction" type="entity_lookup"/>
+                    <action id="entityClearAction" type="entity_clear"/>
+                </actions>
+            </entityPicker>
+            <dateTimePicker id="startAtField" property="startAt"/>
+            <dateTimePicker id="endAtField" property="endAt"/>
+            <select id="statusField" property="status"/>
+            <textField id="commentField" property="comment"/>
+        </formLayout>
+        <hbox id="detailActions">
+            <button id="saveAndCloseButton" action="saveCloseAction"/>
+            <button id="closeButton" action="closeAction"/>
+        </hbox>
+    </layout>
+</view>
+----
+
+=== Что Studio делает по умолчанию
+
+Принято в канон как есть:
+
+* id экрана строится от JPA-имени сущности: `Floor_.detail` (у `Floor`
+  `@Entity(name = "Floor_")`).
+* Ключ заголовка — с маленькой буквы: `bookingListView.title`,
+  `bookingDetailView.title`.
+* Enum в карточке — `select`.
+* Ссылки — `entityPicker` с `entity_lookup` / `entity_clear`, ссылочные
+  свойства в fetch plan — `_base`.
+* Встроенные гриды композиции открывают ребёнка диалогом (`openMode=DIALOG`);
+  грид M2M — `list_add` / `list_exclude`.
+* Ключи заголовков Studio пишет в оба бандла, `ru_RU` и `en`.
+
+Не принято, доводится вручную:
+
+* `Integer` Studio кладёт в `textField`; по канону — `integerField`.
+* Строка 500 символов (`Booking.comment`) — `textField`; по канону — `textArea`.
+* Обратные ссылки композиции выводятся `entityPicker`'ом; по канону скрыты.
+* Запросы списков без `order by`; сортировки — по разделу «Содержимое экранов».
+
+== Критерии приёмки
+
+. Есть все 11 экранов из раздела «Набор экранов» с указанными id и route;
+  `Floor.list` нет.
+. В меню ровно четыре пункта в указанном порядке, у всех русские заголовки.
+. В карточках все ссылки `@ManyToOne` — `entityPicker` с `entity_lookup` и
+  `entity_clear`; `status` — `select`; поля `id`, `version` и обратные
+  ссылки композиции нигде не показаны.
+. В карточке здания можно создать этаж, в нём переговорку с удобством и место,
+  и всё сохраняется одной кнопкой «ОК» карточки здания.
+. «Исключить» в гриде удобств снимает удобство с переговорки, само удобство
+  остаётся в справочнике.
+. В `Room.list` и `Desk.list` нет кнопок создания, редактирования и удаления;
+  при выборе цели брони они открываются как lookup и возвращают выбранную
+  строку.
+. Все заголовки экранов берутся из ключей таблицы «Ключи сообщений», их
+  значения в `messages_ru_RU.properties` русские.
+. Gate 1: инспекция IntelliJ без замечаний на всех новых `*.java` и
+  `*-view.xml`, включая предупреждения о `msg://` и путях свойств.
+. Gate 2: `gradle clean test` зелёный.
+. Gate 3: пользователь прошёл чек-лист в браузере, который Claude даёт в конце
+  реализации.
+
+== Принятые решения
+
+. *Списка переговорок в меню нет.* `Room.list` и `Desk.list` — только выбор
+  цели брони.
+. *Поле `user` в брони редактируемое* (бронь за коллегу).
+. *Этажи в карточке здания сортируются* через `@OrderBy("number")` на
+  `Building.floors`; схема не меняется.
+. *Lookup-списки* `Room.list` и `Desk.list` сортируются по зданию, номеру
+  этажа и названию (коду).

@@ -33,6 +33,7 @@ public class Building {
     @Column(name = "ADDRESS")
     private String address;
 
+    @OrderBy("number")
     @Composition
     @OneToMany(mappedBy = "building")
     private List<Floor> floors;
