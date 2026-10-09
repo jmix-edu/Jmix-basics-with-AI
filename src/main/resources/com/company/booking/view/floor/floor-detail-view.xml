@@ -30,7 +30,15 @@
             </responsiveSteps>
             <integerField id="numberField" property="number"/>
             <textField id="nameField" property="name"/>
+            <fileStorageUploadField id="planField" property="plan" colspan="2"
+                                    acceptedFileTypes="image/png,image/jpeg,.png,.jpg,.jpeg"
+                                    maxFileSize="10485760"
+                                    fileTooBigText="msg://planField.fileTooBigText"
+                                    incorrectFileTypeText="msg://com.company.booking.service/FloorPlan.wrongType"
+                                    clearButtonVisible="true"/>
         </formLayout>
+        <image id="planImage" dataContainer="floorDc" property="plan"
+               maxWidth="100%" visible="false"/>
         <h4 text="msg://com.company.booking.entity/Floor.rooms"/>
         <hbox id="roomsButtonsPanel" wrap="true" width="100%">
             <button action="roomsDataGrid.createAction"/>

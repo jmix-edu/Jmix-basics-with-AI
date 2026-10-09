@@ -12,6 +12,8 @@
             </fetchPlan>
             <loader id="bookingDl"/>
         </instance>
+        <!-- Floor of the chosen room or desk, filled by the controller -->
+        <instance id="floorDc" class="com.company.booking.entity.Floor"/>
     </data>
     <facets>
         <dataLoadCoordinator auto="true"/>
@@ -49,6 +51,12 @@
             <select id="statusField" property="status"/>
             <textArea id="commentField" property="comment"/>
         </formLayout>
+        <vbox id="planBox" padding="false" width="100%" visible="false">
+            <h4 text="msg://planBox.title"/>
+            <image id="planImage" dataContainer="floorDc" property="plan" maxWidth="100%"/>
+            <span id="noPlanText" text="msg://noPlanText.text"/>
+            <button id="downloadPlanButton" text="msg://downloadPlanButton.text"/>
+        </vbox>
         <hbox id="detailActions">
             <button id="saveAndCloseButton" action="saveCloseAction"/>
             <button id="closeButton" action="closeAction"/>
