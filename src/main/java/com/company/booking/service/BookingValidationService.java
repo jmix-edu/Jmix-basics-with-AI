@@ -4,11 +4,7 @@ import com.company.booking.entity.Booking;
 import com.company.booking.entity.BookingStatus;
 import com.company.booking.entity.Desk;
 import com.company.booking.entity.Room;
-import io.jmix.core.DataManager;
-import io.jmix.core.EntityStates;
-import io.jmix.core.FetchPlan;
-import io.jmix.core.Messages;
-import io.jmix.core.MetadataTools;
+import io.jmix.core.*;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -26,16 +22,16 @@ public class BookingValidationService {
 
     private static final String MESSAGE_GROUP = "com.company.booking.service";
 
-    private final DataManager dataManager;
+    private final UnconstrainedDataManager unconstrainedDataManager;
     private final Messages messages;
     private final EntityStates entityStates;
     private final MetadataTools metadataTools;
 
-    public BookingValidationService(DataManager dataManager,
+    public BookingValidationService(UnconstrainedDataManager unconstrainedDataManager,
                                     Messages messages,
                                     EntityStates entityStates,
                                     MetadataTools metadataTools) {
-        this.dataManager = dataManager;
+        this.unconstrainedDataManager = unconstrainedDataManager;
         this.messages = messages;
         this.entityStates = entityStates;
         this.metadataTools = metadataTools;
@@ -75,8 +71,12 @@ public class BookingValidationService {
         return errors;
     }
 
+    /**
+     * Searches all bookings, not only those the current user may read: a row-level role
+     * such as "own bookings only" must not hide a conflicting booking of another user.
+     */
     private Optional<Booking> findConflict(Booking booking, String targetProperty, Object target) {
-        return dataManager.load(Booking.class)
+        return unconstrainedDataManager.load(Booking.class)
                 .query("select e from Booking e where e." + targetProperty + " = :target"
                         + " and e.status <> :cancelled and e.id <> :id"
                         + " and e.startAt < :endAt and e.endAt > :startAt"
@@ -98,7 +98,7 @@ public class BookingValidationService {
         if (entityStates.isLoaded(booking, property)) {
             return getter.apply(booking);
         }
-        return dataManager.load(Booking.class)
+        return unconstrainedDataManager.load(Booking.class)
                 .id(booking.getId())
                 .fetchPlan(fp -> fp.add(property, FetchPlan.INSTANCE_NAME))
                 .optional()
