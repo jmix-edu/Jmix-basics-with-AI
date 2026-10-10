@@ -29,3 +29,9 @@ vite.generated.ts
 webpack.generated.js
 
 .DS_Store
+
+### Local demo secrets (OpenRouter key) ###
+/config/
+
+### Docker Compose secrets ###
+.env

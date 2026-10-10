@@ -1,0 +1,3 @@
+# Only build/libs/booking.jar goes into the image: no dev data, secrets or sources
+*
+!build/libs/booking.jar

@@ -3,6 +3,7 @@ package com.company.booking.demodata;
 import com.company.booking.entity.Building;
 import com.company.booking.entity.Desk;
 import com.company.booking.entity.Room;
+import com.company.booking.listener.DemoDataSeeder;
 import com.company.booking.service.DemoDataService;
 import io.jmix.core.DataManager;
 import io.jmix.core.security.SystemAuthenticator;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.ApplicationContext;
 import org.springframework.test.context.ActiveProfiles;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,6 +30,8 @@ public class DemoDataServiceTest {
     DataManager dataManager;
     @Autowired
     SystemAuthenticator systemAuthenticator;
+    @Autowired
+    ApplicationContext applicationContext;
 
     @BeforeEach
     void setUp() {
@@ -58,6 +62,12 @@ public class DemoDataServiceTest {
         assertThat(count(Building.class)).isEqualTo(1);
         assertThat(count(Room.class)).isEqualTo(4);
         assertThat(count(Desk.class)).isEqualTo(12);
+    }
+
+    @Test
+    void seederIsNotCreatedOutsideDevProfile() {
+        // Tests run in the test profile: the startup seeder must not be created here, as in prod
+        assertThat(applicationContext.getBeansOfType(DemoDataSeeder.class)).isEmpty();
     }
 
     private long count(Class<?> entityClass) {

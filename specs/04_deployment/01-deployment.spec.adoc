@@ -1,0 +1,299 @@
+= Развёртывание: профили, fat-JAR, Docker
+:toc:
+:sectnums:
+
+[cols="1,3"]
+|===
+| Модуль | 04_deployment
+| Статус | Реализовано, ждёт Gate 3
+| Зависит от | все спеки модулей 01–03 и `05_addons/01-ai-tools.spec.adoc`
+|===
+
+== Цель
+
+Подготовить приложение бронирования к развёртыванию стандартными средствами
+Spring Boot:
+
+* одно и то же приложение работает в двух профилях: `dev` для разработки
+  (по умолчанию) и `prod` для развёртывания;
+* всё, что отличается между окружениями, и все секреты приходят снаружи —
+  из переменных окружения, а не из кода и не из образа;
+* приложение собирается в исполняемый fat-JAR с прод-сборкой фронтенда Vaadin;
+* `docker compose up` поднимает приложение и PostgreSQL на одной машине, с
+  томами для данных и загруженных файлов.
+
+== Область
+
+=== Входит
+
+* Имя приложения, разделение настроек на общие, `dev` и `prod`.
+* Профиль `dev` по умолчанию: встроенная HSQLDB и демо-данные.
+* Профиль `prod`: PostgreSQL через переменные окружения, тише логи, без
+  демо-данных, без подстановки логина и пароля на экране входа.
+* `@Profile("dev")` на сидере демо-данных.
+* Fat-JAR с прод-сборкой Vaadin; объяснение, когда нужен WAR.
+* Каталог файлового хранилища в prod через `FILE_STORAGE_DIR`.
+* `Dockerfile`, `docker-compose.yml`, `.dockerignore`, пример файла
+  переменных `.env.example`.
+
+=== Не входит
+
+* *Внешняя управляемая БД, кластеризация, репликация, несколько экземпляров
+  приложения, балансировка и общие сессии* — продвинутый курс. PostgreSQL здесь
+  — контейнер рядом с приложением на той же машине.
+* HTTPS, обратный прокси, домен и сертификаты.
+* CI/CD, публикация образа в registry, Kubernetes.
+* Резервное копирование БД и файлов, мониторинг, Actuator, метрики.
+* Хранилища секретов (Vault и подобные): секреты — обычные переменные
+  окружения и файл `.env` на машине развёртывания.
+* Перенос данных из dev-базы HSQLDB в PostgreSQL.
+* Хранилище файлов S3 и подобные.
+* Принудительная смена пароля `admin` при первом входе и политика паролей.
+* Закрытие утечки броней через AI-чат (бэклог `05_addons/01-ai-tools`).
+
+== Имя приложения и настройки
+
+`spring.application.name=booking` — в общем `application.properties`.
+
+=== Раскладка файлов
+
+[cols="2,4"]
+|===
+| Файл | Что в нём
+
+| `application.properties`
+| Общее для всех окружений: имя приложения, Liquibase, меню и экраны Jmix,
+  локали, ограничения на файлы, настройки AI без ключа,
+  `spring.profiles.default=dev`.
+
+| `application-dev.properties` (новый)
+| HSQLDB в `.jmix/hsqldb/booking`, хранилище файлов в `.jmix/filestorage`,
+  подстановка `admin`/`admin` на экране входа, цветные и подробные логи —
+  всё, что сейчас лежит в `application.properties` и нужно только при
+  разработке.
+
+| `application-prod.properties` (новый)
+| Datasource, хранилище и ключ AI только через `${...}` из переменных
+  окружения, тихие логи.
+
+| `application-test.properties`
+| Без изменений: тесты включают профиль `test`, профиль `dev` у них не
+  активен.
+|===
+
+* `spring.profiles.default=dev` действует, только когда ни один профиль не
+  задан явно. Поэтому запуск из IDEA и `bootRun` без настроек — это `dev`, а
+  контейнер задаёт `SPRING_PROFILES_ACTIVE=prod`.
+* Ключ OpenRouter для демо лежит в `config/application.properties` (в git не
+  попадает, см. спеку 05). В образ этот файл не попадает: `.dockerignore`.
+
+=== Переменные окружения prod
+
+[cols="2,3,1"]
+|===
+| Переменная | Что задаёт | Секрет
+
+| `SPRING_PROFILES_ACTIVE` | `prod` | нет
+| `MAIN_DATASOURCE_URL` | `jdbc:postgresql://db:5432/booking` в compose | нет
+| `MAIN_DATASOURCE_USERNAME` | пользователь БД | нет
+| `MAIN_DATASOURCE_PASSWORD` | пароль БД | да
+| `FILE_STORAGE_DIR` | каталог хранилища файлов, `/app/filestorage` в контейнере | нет
+| `OPENROUTER_API_KEY` | ключ AI-чата; в prod чат выключен, см. «Принятые решения» | да
+|===
+
+* В `application-prod.properties` переменные БД и хранилища записаны без
+  значений по умолчанию (`${MAIN_DATASOURCE_URL}`): забытая переменная
+  останавливает старт с понятной ошибкой, а не тихо подключает что-то не то.
+* Секреты задаются только в окружении. В `docker-compose.yml` они берутся из
+  файла `.env` рядом с ним; `.env` в `.gitignore`, в репозитории —
+  `.env.example` с пустыми значениями.
+
+== Профили
+
+=== dev (по умолчанию)
+
+* HSQLDB в файле `.jmix/hsqldb/booking`, как сейчас.
+* Демо-данные: сидер работает (здание создаётся на пустой базе).
+* Экран входа подставляет `admin`/`admin`.
+* Логи как сейчас: цветные, `AccessLogger` на `debug`.
+
+=== prod
+
+* PostgreSQL: драйвер `org.postgresql:postgresql` (`runtimeOnly`, версия из
+  Spring Boot). Схему создаёт Liquibase из тех же changelog, что и в dev.
+* Демо-данных нет: сидер в этом профиле не создаётся.
+* Экран входа ничего не подставляет.
+* Логи: без цвета (`spring.output.ansi.enabled=never`), `io.jmix` —
+  `warn`, `AccessLogger` и SQL EclipseLink — `warn`. Сообщения приложения
+  (`com.company.booking`) — `info`.
+* *Учётная запись `admin`* создаётся changelog `010-init-user.xml` с паролем
+  `admin` в любом профиле. В prod пароль меняется вручную сразу после первого
+  запуска; это шаг в чек-листе развёртывания.
+
+=== Сидер демо-данных под профиль
+
+`listener/DemoDataSeeder` получает `@Profile("dev")`: в `prod` и `test` бина
+нет, демо-данные создаются только в dev. Сервис `DemoDataService` остаётся
+без профиля — его вызывает тест.
+
+Свойство `booking.demo-data.enabled` удалено: его задачу (выключить сидер в
+тестах) теперь решает профиль.
+
+== Сборка
+
+=== Fat-JAR
+
+* `vaadin { productionMode = false }` в `build.gradle` остаётся как есть: так
+  Studio и запуск из IDEA работают в режиме разработки Vaadin.
+* Прод-сборка: `./gradlew -Pvaadin.productionMode=true bootJar`. Свойство
+  Gradle включает прод-режим Vaadin только для этой сборки: фронтенд
+  собирается и минифицируется заранее, в JAR не попадает dev-сервер Vaadin.
+* Имя архива фиксируется: `bootJar { archiveFileName = 'booking.jar' }`, чтобы
+  `Dockerfile` не зависел от версии.
+* Запуск: `java -jar build/libs/booking.jar` — внутри встроенный Tomcat, всё
+  нужное в одном файле.
+
+=== Почему не WAR
+
+WAR нужен, когда приложение разворачивают в уже работающий сервлет-контейнер
+(внешний Tomcat), который администрирует кто-то другой. Тогда подключают
+плагин `war`, наследуют приложение от `SpringBootServletInitializer`, а
+встроенный Tomcat помечают `providedRuntime`. Для Spring Boot 4 нужен внешний
+контейнер с Jakarta Servlet 6.1 (Tomcat 11).
+
+Мы выбираем fat-JAR: приложение само себе сервер, один процесс на контейнер,
+одинаковый запуск везде (`java -jar`), версия Tomcat едет вместе с
+приложением. WAR в этом шаге не собирается.
+
+== Файлы в prod
+
+* `jmix.localfs.storage-dir=${FILE_STORAGE_DIR}` в `application-prod.properties`.
+* В контейнере `FILE_STORAGE_DIR=/app/filestorage`, это именованный том
+  `file-storage`: файлы переживают пересоздание контейнера.
+* Приложение в контейнере работает от непривилегированного пользователя
+  `app`. Каталоги, куда оно пишет, создаются в образе и отдаются ему:
+  `/app/filestorage` (хранилище) и `/app/.jmix` (временные файлы и рабочий
+  каталог Jmix: `.jmix/temp`, `.jmix/conf`).
+* Пустой именованный том при первом подключении получает владельца и права
+  каталога из образа, поэтому `chown` в `Dockerfile` достаточно: отдельный шаг
+  настройки тома не нужен.
+
+== Контейнеризация
+
+=== Dockerfile
+
+* Образ собирается из готового `build/libs/booking.jar`: сначала
+  `./gradlew -Pvaadin.productionMode=true bootJar` на машине разработчика,
+  потом `docker compose build`. Gradle и Node внутри образа не нужны.
+* База — JRE 21 (`eclipse-temurin:21-jre`), версия образа фиксируется тегом.
+* Пользователь `app` без root, `WORKDIR /app`, каталоги из раздела «Файлы в
+  prod» созданы и отданы ему.
+* `EXPOSE 8080`, запуск `java -jar /app/booking.jar`.
+* Профиль в образ не зашивается: его задаёт окружение (compose).
+
+=== .dockerignore
+
+В контекст сборки попадает только JAR. Исключаются как минимум `.jmix/`
+(dev-база и файлы), `config/` (ключ для демо), `.env`, `.git/`, `.idea/`,
+`node_modules/`, `src/`.
+
+=== docker-compose.yml
+
+[cols="1,4"]
+|===
+| Сервис | Что делает
+
+| `db`
+| PostgreSQL (`postgres:17-alpine`), база `booking`. Данные в томе
+  `db-data`. Порт наружу не публикуется. `healthcheck` через `pg_isready`.
+
+| `app`
+| Образ из `Dockerfile`. `SPRING_PROFILES_ACTIVE=prod`, переменные из таблицы
+  выше, секреты — из `.env`. Ждёт `db` до состояния healthy. Порт
+  `8080:8080`. Том `file-storage` в `/app/filestorage`.
+|===
+
+== Проверка
+
+Тесты — только на то, что трудно увидеть руками:
+
+. В профиле `test` бина `DemoDataSeeder` нет (контекст поднимается без него).
+
+Остальное проверяется запуском. Claude выполняет сам:
+
+. `./gradlew --no-daemon clean test` — зелёный (кроме тестов, красных до этой
+  спеки, см. «Критерии приёмки»).
+. `./gradlew -Pvaadin.productionMode=true bootJar` собирает
+  `build/libs/booking.jar`; в нём нет `vaadin-dev`.
+. `docker compose up -d --build` с тестовым `.env`: оба контейнера healthy или
+  running, в логе приложения — успешный старт Liquibase на PostgreSQL и
+  `Started BookingApplication`, без `Demo data created`.
+. Экран входа открывается по `http://localhost:8080`.
+. Процесс в контейнере работает не от root (`docker compose exec app id`).
+. `docker compose down -v` — удаляются только контейнеры и тома этого
+  проекта, по имени. Никаких глобальных `prune`.
+
+Пользователь проверяет в браузере (Gate 3): вход `admin`, смена пароля,
+загрузка плана этажа и его наличие после `docker compose restart app`.
+
+== Критерии приёмки
+
+. `spring.application.name=booking`.
+. Запуск без профиля — это `dev`: HSQLDB, демо-данные, как раньше.
+. Профиль `prod` берёт БД, хранилище и ключ AI только из переменных
+  окружения; без `MAIN_DATASOURCE_URL` приложение не стартует с понятной
+  ошибкой.
+. В prod нет демо-данных и подстановки логина на экране входа, логи тише.
+. В репозитории и в образе нет ни одного секрета: ни ключа OpenRouter, ни
+  паролей БД. `.env` в `.gitignore`, `config/` и `.env` в `.dockerignore`.
+. `./gradlew -Pvaadin.productionMode=true bootJar` даёт рабочий
+  `booking.jar`; строка `vaadin { productionMode = false }` не тронута.
+. `docker compose up` поднимает PostgreSQL и приложение; схема создаётся
+  Liquibase; приложение работает не от root.
+. Загруженный план этажа лежит в томе `file-storage` и переживает
+  пересоздание контейнера приложения.
+. В спеке объяснено, когда нужен WAR и почему выбран JAR.
+. Gate 1 и Gate 2 зелёные, кроме тестов, красных до этой спеки (два теста
+  утечки в `AiDataAccessTest`, три в `RolesTest`); Gate 3 — пользователь
+  прошёл чек-лист.
+
+== Принятые решения
+
+. *`booking.demo-data.enabled` удалено* вместе с проверкой в `DemoDataSeeder`:
+  сидер включается только профилем `dev`.
+. *AI-чат в prod выключен*: `spring.ai.model.chat=none` в
+  `application-prod.properties`, пока не закрыта утечка броней через чат.
+. *Версия Jmix остаётся 3.0.2*, как её поставила Studio при подключении
+  AI Tools.
+
+== Заметки реализации
+
+* *Понятная ошибка без переменных.* Нераскрытый `${MAIN_DATASOURCE_URL}`
+  Spring передаёт в datasource как есть, и старт падает с
+  `'url' must start with "jdbc"` — переменная не названа. Поэтому в prod есть
+  `config/ProdEnvironmentCheck`: `BeanFactoryPostProcessor`, который до
+  создания бинов проверяет `MAIN_DATASOURCE_URL`, `MAIN_DATASOURCE_USERNAME`,
+  `MAIN_DATASOURCE_PASSWORD`, `FILE_STORAGE_DIR` и останавливает старт с
+  сообщением `Profile 'prod' requires environment variables that are not set: ...`.
+* *`vaadin-dev` вне прод-JAR.* `build.gradle` подключает `vaadin-dev` как
+  обычную зависимость, и прод-сборка тащила в JAR `vaadin-dev`,
+  `vaadin-dev-server`, `vaadin-dev-bundle`. При `-Pvaadin.productionMode=true`
+  модуль `vaadin-dev` исключается из `runtimeClasspath`; сборка для
+  разработки его по-прежнему содержит.
+* *`.dockerignore` — белый список*: в контекст сборки попадает только
+  `build/libs/booking.jar`, всё остальное исключено.
+* *Секреты в compose.* `.env` содержит `DB_USERNAME`, `DB_PASSWORD`,
+  `OPENROUTER_API_KEY`, `APP_PORT`; compose раскладывает их в
+  `POSTGRES_*` для БД и `MAIN_DATASOURCE_*` для приложения. Без
+  `DB_PASSWORD` compose не запускается (`${DB_PASSWORD:?...}`).
+* *Порт приложения* настраивается `APP_PORT` (по умолчанию 8080), чтобы
+  compose можно было поднять рядом с приложением, запущенным из IDEA.
+* *Логи prod*: дополнительно `liquibase=warn`; при старте на готовой схеме
+  в логе около 25 строк.
+* *Проверено запуском* (2026-10-09): прод-JAR 176 МБ без `vaadin-dev`;
+  `docker compose` под отдельным именем проекта — 42 changeset на
+  PostgreSQL 17 без ошибок, `Started BookingApplication`, демо-данных нет,
+  в БД только `admin`; `/login` отвечает 200; процесс `uid=999(app)`;
+  `/app/filestorage` и `/app/.jmix` принадлежат `app`; файл в томе пережил
+  пересоздание контейнера; без переменных — понятная ошибка. Проект проверки
+  удалён `docker compose -p booking-check down -v --rmi local`.
